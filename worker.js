@@ -209,17 +209,27 @@ async function handleUpdate(update, env) {
             await sendMessage(env, env.ADMIN_ID, `✅ သက်တမ်းကုန်ခါနီး VIP ${count} ဦးထံသို့ Alert ပို့ပြီးပါပြီ။`);
         }
 
-        // Edit VIP (သက်တမ်းတိုးရန်)
+        // Edit VIP (သက်တမ်းတိုးရန် - လက်ကျန်ရက်နဲ့ ပေါင်းစနစ်)
         if (text.startsWith('/editvip ')) {
             const parts = text.split(' ');
             if (parts.length === 3) {
                 const targetId = parts[1];
                 const days = parseInt(parts[2]);
                 
-                // လက်ရှိ vip_expiry ကို အခြေခံပြီး ရက်ပေါင်းတိုးပေးခြင်း
-                await env.DB.prepare("UPDATE users SET vip_expiry = datetime(vip_expiry, '+' || ? || ' days') WHERE chat_id = ?").bind(days, targetId).run();
-                await sendMessage(env, env.ADMIN_ID, `✅ Chat ID: ${targetId} ကို ${days} ရက် ထပ်မံသက်တမ်းတိုးပေးလိုက်ပါပြီ။`);
-                await sendMessage(env, targetId, `🎉 လူကြီးမင်း၏ VIP သက်တမ်းကို Admin မှ နောက်ထပ် ${days} ရက် ထပ်မံတိုးပေးလိုက်ပါသည်။`);
+                // လက်ကျန်ရက်ရှိရင် အဲဒီအပေါ်ပေါင်းထည့်မည်၊ သက်တမ်းကုန်နေပြီဆိုလျှင် ယနေ့မှစ၍ ရက်ပေါင်းထည့်မည်
+                await env.DB.prepare("UPDATE users SET vip_expiry = datetime(MAX(vip_expiry, CURRENT_TIMESTAMP), '+' || ? || ' days') WHERE chat_id = ?").bind(days, targetId).run();
+                
+                // သက်တမ်းတိုးပြီးနောက် အသစ်ဖြစ်သွားသော ကုန်ဆုံးရက်ကို ပြန်ခေါ်ရန်
+                const updatedUser = await env.DB.prepare("SELECT vip_expiry FROM users WHERE chat_id = ?").bind(targetId).first();
+                
+                if (updatedUser) {
+                    const newExpiryDate = new Date(updatedUser.vip_expiry).toLocaleDateString('en-GB'); // DD/MM/YYYY ပုံစံ
+                    
+                    await sendMessage(env, env.ADMIN_ID, `✅ Chat ID: ${targetId} ကို ${days} ရက် ထပ်မံသက်တမ်းတိုးပေးလိုက်ပါပြီ။\n\n📅 သက်တမ်းကုန်ဆုံးမည့်ရက်: ${newExpiryDate}`);
+                    await sendMessage(env, targetId, `🎉 လူကြီးမင်း၏ VIP သက်တမ်းကို Admin မှ နောက်ထပ် ${days} ရက် ထပ်မံတိုးပေးလိုက်ပါသည်။\n\n📅 သက်တမ်းကုန်ဆုံးမည့်ရက်: ${newExpiryDate}`);
+                } else {
+                    await sendMessage(env, env.ADMIN_ID, "⚠️ အဆိုပါ Chat ID ဖြင့် User ကို ရှာမတွေ့ပါ။");
+                }
             } else {
                 await sendMessage(env, env.ADMIN_ID, "⚠️ Format မှားနေပါသည်။\nအသုံးပြုရန်: `/editvip [chat_id] [days]`\nဥပမာ: `/editvip 123456789 30`", "Markdown");
             }
