@@ -2,12 +2,43 @@ export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
 
-        // 1. Webhook Setup Route (Browser မှ တိုက်ရိုက်ခေါ်ရန်)
+        // 1. Webhook & Menu Setup Route (Browser မှ တိုက်ရိုက်ခေါ်ရန်)
         if (request.method === 'GET' && url.pathname === '/setup') {
             const webhookUrl = `https://${url.hostname}/webhook`;
+            
+            // Webhook ချိတ်ဆက်ခြင်း
             const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook?url=${webhookUrl}`);
             const result = await response.json();
-            return new Response(JSON.stringify(result), {
+
+            // Client များအတွက် ပုံမှန် Menu သတ်မှတ်ခြင်း
+            await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    commands: [
+                        { command: 'start', description: 'Bot ကို စတင်ရန် / ငွေလွှဲပြေစာပို့ရန်' },
+                        { command: 'calc', description: 'Budget တွက်ရန် (VIP သီးသန့်)' }
+                    ]
+                })
+            });
+
+            // Admin အတွက် သီးသန့် Menu သတ်မှတ်ခြင်း (Scope ဖြင့်ခွဲထားသည်)
+            await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    commands: [
+                        { command: 'viplist', description: 'VIP စာရင်းကြည့်ရန်' },
+                        { command: 'alertvip', description: 'သက်တမ်းကုန်ခါနီးသူများကို Alert ပို့ရန်' },
+                        { command: 'broadcast', description: 'ကြေညာချက်ပို့ရန် (ဥပမာ- /broadcast စာသား)' },
+                        { command: 'editvip', description: 'VIP သက်တမ်းတိုးရန် (ဥပမာ- /editvip [id] [days])' },
+                        { command: 'delvip', description: 'VIP စာရင်းမှ ဖျက်ရန် (ဥပမာ- /delvip [id])' }
+                    ],
+                    scope: { type: 'chat', chat_id: env.ADMIN_ID }
+                })
+            });
+
+            return new Response(JSON.stringify({ webhook: result, menu_setup: "Success" }), {
                 headers: { 'Content-Type': 'application/json' }
             });
         }
@@ -51,19 +82,29 @@ async function handleUpdate(update, env) {
         } else if (user.status === 'pending') {
             await sendMessage(env, chatId, "⏳ သင်၏အကောင့်သည် Admin ၏ အတည်ပြုချက်ကို စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။ (Pending)");
         } else if (user.status === 'vip') {
-            await sendMessage(env, chatId, "✅ သင်သည် VIP အသုံးပြုခွင့် ရရှိထားပါသည်။\n\nတွက်ချက်ရန် Command: \n`/calc [ဝင်ငွေ] [စုငွေရာခိုင်နှုန်း] [အသုံးစရိတ်]`\nဥပမာ - `/calc 100000 20 16000`", "Markdown");
+            await sendMessage(env, chatId, "✅ သင်သည် VIP အသုံးပြုခွင့် ရရှိထားပါသည်။\n\nတွက်ချက်ရန် Command: \n`/calc 100000 20 16000`", "Markdown");
+        } else if (user.status === 'rejected') {
+            // Rejected ဖြစ်နေသူကို ပြန်လည်ပြင်ဆင်ခွင့်ပေးခြင်း
+            await env.DB.prepare("UPDATE users SET status = 'pending' WHERE chat_id = ?").bind(chatId).run();
+            await sendMessage(env, chatId, "❌ ယခင်ငွေလွှဲပြေစာမှာ ပယ်ချခံခဲ့ရပါသည်။\n\nကျေးဇူးပြု၍ မှန်ကန်သော Kpay (သို့) Wavepay ငွေလွှဲပြေစာ (Slip) သို့မဟုတ် TID ကို ထပ်မံပေးပို့ပါ။");
         }
         return;
     }
 
     // Handle Client Sending Payment Slips (Photos or TIDs)
-    if (user && user.status === 'pending') {
+    if (user && (user.status === 'pending' || user.status === 'rejected')) {
         if (msg.photo || text.length > 5) {
+            
+            // အကယ်၍ Rejected ဖြစ်နေရင် Pending အဖြစ် Database မှာ ပြန်ပြောင်းပေးမည်
+            if (user.status === 'rejected') {
+                await env.DB.prepare("UPDATE users SET status = 'pending' WHERE chat_id = ?").bind(chatId).run();
+            }
+
             // Notify Client
             await sendMessage(env, chatId, "✅ ငွေလွှဲမှတ်တမ်း လက်ခံရရှိပါသည်။ Admin မှ စစ်ဆေးပြီးပါက အကြောင်းကြားပေးပါမည်။");
             
             // Forward to Admin with Inline Keyboard
-            const adminMsg = `🆕 သုံးစွဲသူအသစ်အတည်ပြုရန်\nUsername: @${username}\nChat ID: ${chatId}\nPayment Info ပေးပို့ထားပါသည်။`;
+            const adminMsg = `🆕 သုံးစွဲသူအတည်ပြုရန်\nUsername: @${username}\nChat ID: ${chatId}\nPayment Info ပေးပို့ထားပါသည်။`;
             const keyboard = {
                 inline_keyboard: [[
                     { text: "✅ Approve (1 Month)", callback_data: `approve_${chatId}` },
@@ -100,7 +141,6 @@ async function handleUpdate(update, env) {
                 const stepC = stepB / 4;
                 const stepD = stepC / 7;
 
-                // Output Format ပြင်ဆင်ခြင်း
                 let resultMsg = `📊 Budget Studio Results 📊\n\n` +
                                 `🔹 ဝင်ငွေ: ${income.toLocaleString()} ကျပ်\n` +
                                 `🔹 စုငွေ (${savingsPercent}%): ${savingsAmount.toLocaleString()} ကျပ်\n` +
@@ -112,7 +152,6 @@ async function handleUpdate(update, env) {
                                 `(C) တစ်ပတ်သုံးရမည့်ငွေ = ${stepC.toLocaleString()} ကျပ်\n` +
                                 `(D) တစ်ရက်သုံးရမည့်ငွေ = ${stepD.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} ကျပ်\n\n`;
 
-                // အကြွေးဖြစ်နေပါက Alert ပြရန် သို့မဟုတ် ပုံမှန်အတိုင်းပြရန်
                 if (stepB < 0) {
                     resultMsg += `⚠️ သတိပြုရန်! ဝင်ငွေထက် အသုံးစရိတ် ပိုများနေပါသည် (အကြွေး)\n` +
                                  `💰 ${Math.floor(stepD).toLocaleString()} ကျပ် 💰`;
@@ -121,50 +160,82 @@ async function handleUpdate(update, env) {
                                  `💰 ${Math.floor(stepD).toLocaleString()} ကျပ် 💰`;
                 }
                 
-                // Markdown ဖယ်ပြီး ပုံမှန် Text အနေနဲ့ပို့ရန်
                 await sendMessage(env, chatId, resultMsg);
             } else {
                 await sendMessage(env, chatId, "⚠️ Format မှားယွင်းနေပါသည်။\nအသုံးပြုရန်: `/calc 100000 20 16000`", "Markdown");
             }
         }
+    }
 
-        // ==========================================
-        // ADMIN ONLY COMMANDS
-        // ==========================================
-        if (chatId.toString() === env.ADMIN_ID) {
-            
-            // Broadcast Message
-            if (text.startsWith('/broadcast ')) {
-                const broadcastMsg = text.replace('/broadcast ', '');
-                const { results } = await env.DB.prepare("SELECT chat_id FROM users WHERE status = 'vip'").all();
-                let count = 0;
-                for (const row of results) {
-                    await sendMessage(env, row.chat_id, `📢 *Admin Notification*\n\n${broadcastMsg}`, "Markdown");
-                    count++;
-                }
-                await sendMessage(env, env.ADMIN_ID, `✅ သုံးစွဲသူ ${count} ဦးထံသို့ Message ပို့ပြီးပါပြီ။`);
+    // ==========================================
+    // ADMIN ONLY COMMANDS
+    // ==========================================
+    if (chatId.toString() === env.ADMIN_ID) {
+        
+        // Broadcast Message
+        if (text.startsWith('/broadcast ')) {
+            const broadcastMsg = text.replace('/broadcast ', '');
+            const { results } = await env.DB.prepare("SELECT chat_id FROM users WHERE status = 'vip'").all();
+            let count = 0;
+            for (const row of results) {
+                await sendMessage(env, row.chat_id, `📢 *Admin Notification*\n\n${broadcastMsg}`, "Markdown");
+                count++;
             }
+            await sendMessage(env, env.ADMIN_ID, `✅ သုံးစွဲသူ ${count} ဦးထံသို့ Message ပို့ပြီးပါပြီ။`);
+        }
 
-            // VIP List
-            if (text === '/viplist') {
-                const { results } = await env.DB.prepare("SELECT username, vip_expiry FROM users WHERE status = 'vip'").all();
-                let listMsg = "📝 *VIP Members List*\n\n";
-                results.forEach((u, index) => {
-                    listMsg += `${index + 1}. @${u.username} (Exp: ${new Date(u.vip_expiry).toLocaleDateString()})\n`;
-                });
-                await sendMessage(env, env.ADMIN_ID, listMsg, "Markdown");
+        // VIP List
+        if (text === '/viplist') {
+            const { results } = await env.DB.prepare("SELECT chat_id, username, vip_expiry FROM users WHERE status = 'vip'").all();
+            if (results.length === 0) {
+                await sendMessage(env, env.ADMIN_ID, "⚠️ လက်ရှိတွင် VIP အသုံးပြုသူ မရှိသေးပါ။");
+                return;
             }
+            let listMsg = "📝 *VIP Members List*\n\n";
+            results.forEach((u, index) => {
+                listMsg += `${index + 1}. @${u.username} | ID: \`${u.chat_id}\`\n(Exp: ${new Date(u.vip_expiry).toLocaleDateString()})\n\n`;
+            });
+            await sendMessage(env, env.ADMIN_ID, listMsg, "Markdown");
+        }
 
-            // Alert VIP (Expiry check logic)
-            if (text === '/alertvip') {
-                // Expiry သက်တမ်း ၃ ရက်အလို VIP များကို Alert လုပ်ရန် Query
-                const { results } = await env.DB.prepare("SELECT chat_id, username, vip_expiry FROM users WHERE status = 'vip' AND vip_expiry <= datetime('now', '+3 days')").all();
-                let count = 0;
-                for (const row of results) {
-                    await sendMessage(env, row.chat_id, "⚠️ *Subscription Alert*\n\nလူကြီးမင်း၏ VIP သက်တမ်းမှာ မကြာမီ ကုန်ဆုံးတော့မည်ဖြစ်ပါသည်။ ဆက်လက်အသုံးပြုရန် Kpay/Wavepay မှတစ်ဆင့် သက်တမ်းတိုးပေးပါ။", "Markdown");
-                    count++;
-                }
-                await sendMessage(env, env.ADMIN_ID, `✅ သက်တမ်းကုန်ခါနီး VIP ${count} ဦးထံသို့ Alert ပို့ပြီးပါပြီ။`);
+        // Alert VIP
+        if (text === '/alertvip') {
+            const { results } = await env.DB.prepare("SELECT chat_id, username, vip_expiry FROM users WHERE status = 'vip' AND vip_expiry <= datetime('now', '+3 days')").all();
+            let count = 0;
+            for (const row of results) {
+                await sendMessage(env, row.chat_id, "⚠️ *Subscription Alert*\n\nလူကြီးမင်း၏ VIP သက်တမ်းမှာ မကြာမီ ကုန်ဆုံးတော့မည်ဖြစ်ပါသည်။ ဆက်လက်အသုံးပြုရန် Kpay/Wavepay မှတစ်ဆင့် သက်တမ်းတိုးပေးပါ။", "Markdown");
+                count++;
+            }
+            await sendMessage(env, env.ADMIN_ID, `✅ သက်တမ်းကုန်ခါနီး VIP ${count} ဦးထံသို့ Alert ပို့ပြီးပါပြီ။`);
+        }
+
+        // Edit VIP (သက်တမ်းတိုးရန်)
+        if (text.startsWith('/editvip ')) {
+            const parts = text.split(' ');
+            if (parts.length === 3) {
+                const targetId = parts[1];
+                const days = parseInt(parts[2]);
+                
+                // လက်ရှိ vip_expiry ကို အခြေခံပြီး ရက်ပေါင်းတိုးပေးခြင်း
+                await env.DB.prepare("UPDATE users SET vip_expiry = datetime(vip_expiry, '+' || ? || ' days') WHERE chat_id = ?").bind(days, targetId).run();
+                await sendMessage(env, env.ADMIN_ID, `✅ Chat ID: ${targetId} ကို ${days} ရက် ထပ်မံသက်တမ်းတိုးပေးလိုက်ပါပြီ။`);
+                await sendMessage(env, targetId, `🎉 လူကြီးမင်း၏ VIP သက်တမ်းကို Admin မှ နောက်ထပ် ${days} ရက် ထပ်မံတိုးပေးလိုက်ပါသည်။`);
+            } else {
+                await sendMessage(env, env.ADMIN_ID, "⚠️ Format မှားနေပါသည်။\nအသုံးပြုရန်: `/editvip [chat_id] [days]`\nဥပမာ: `/editvip 123456789 30`", "Markdown");
+            }
+        }
+
+        // Delete VIP (VIP ဖျက်ရန်)
+        if (text.startsWith('/delvip ')) {
+            const parts = text.split(' ');
+            if (parts.length === 2) {
+                const targetId = parts[1];
+                // Database မှ လုံးဝဖျက်ထုတ်ခြင်း (အစမှ ပြန်လျှောက်စေရန်)
+                await env.DB.prepare("DELETE FROM users WHERE chat_id = ?").bind(targetId).run();
+                await sendMessage(env, env.ADMIN_ID, `🗑️ Chat ID: ${targetId} အား VIP စာရင်းမှ အောင်မြင်စွာ ပယ်ဖျက်လိုက်ပါပြီ။`);
+                await sendMessage(env, targetId, `❌ လူကြီးမင်း၏ VIP အသုံးပြုခွင့်ကို Admin မှ ရုပ်သိမ်းလိုက်ပါသည်။`);
+            } else {
+                await sendMessage(env, env.ADMIN_ID, "⚠️ Format မှားနေပါသည်။\nအသုံးပြုရန်: `/delvip [chat_id]`\nဥပမာ: `/delvip 123456789`", "Markdown");
             }
         }
     }
@@ -178,7 +249,6 @@ async function handleCallback(callbackQuery, env) {
 
     if (data.startsWith('approve_')) {
         const targetId = data.split('_')[1];
-        // 1 Month Expiry addition
         await env.DB.prepare("UPDATE users SET status = 'vip', vip_expiry = datetime('now', '+30 days') WHERE chat_id = ?").bind(targetId).run();
         
         await sendMessage(env, targetId, "🎉 ဂုဏ်ယူပါသည်။ Admin မှ အတည်ပြုပေးလိုက်ပြီဖြစ်၍ Budget Studio ကို စတင်အသုံးပြုနိုင်ပါပြီ။\n\nအသုံးပြုရန် Command: `/calc 100000 20 16000`", "Markdown");
@@ -188,7 +258,7 @@ async function handleCallback(callbackQuery, env) {
         const targetId = data.split('_')[1];
         await env.DB.prepare("UPDATE users SET status = 'rejected' WHERE chat_id = ?").bind(targetId).run();
         
-        await sendMessage(env, targetId, "❌ တောင်းပန်ပါသည်။ လူကြီးမင်း၏ ငွေလွှဲပြေစာကို အတည်ပြု၍မရပါ။ Kpay သို့မဟုတ် Wavepay မှတစ်ဆင့် ထပ်မံပေးပို့ပေးပါ။");
+        await sendMessage(env, targetId, "❌ တောင်းပန်ပါသည်။ လူကြီးမင်း၏ ငွေလွှဲပြေစာကို အတည်ပြု၍မရပါ။ Kpay သို့မဟုတ် Wavepay မှတစ်ဆင့် မှန်ကန်သောပြေစာကို ထပ်မံပေးပို့ပေးပါ။");
         await editMessageText(env, adminChatId, messageId, `❌ Chat ID: ${targetId} ကို Reject လုပ်ပြီးပါပြီ။`);
     }
 }
