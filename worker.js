@@ -82,11 +82,14 @@ async function handleUpdate(update, env) {
         } else if (user.status === 'pending') {
             await sendMessage(env, chatId, "⏳ သင်၏အကောင့်သည် Admin ၏ အတည်ပြုချက်ကို စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။ (Pending)");
         } else if (user.status === 'vip') {
-            // VIP များအတွက် ပြင်ဆင်ထားသော စာသား
-            const vipMsg = "✅ သင်သည် VIP အသုံးပြုခွင့် ရရှိထားပါသည်။\n" +
-                           "သင့်ရဲ့ ငွေကြေးကိစ္စတွေကို အလွယ်တကူ တွက်ချက်လို့ရပါပြီ။ အောက်က အချက် ၃ ချက်ကို space လေးခြားပြီး ပို့ပေးပါနော်။\n" +
-                           "📝 Format: ဝင်ငွေ စုငွေ(%) အသုံးစရိတ်\n" +
-                           "💡 ဥပမာ - `/calc 100000 20 16000`";
+            // VIP များအတွက် Space ခြားပြီး ပိုရှင်းလင်းသော Format
+            const vipMsg = "✅ *သင်သည် VIP အသုံးပြုခွင့် ရရှိထားပါသည်!* 🎉\n\n" +
+                           "သင့်ရဲ့ ငွေကြေးကိစ္စတွေကို အလွယ်တကူ တွက်ချက်လို့ရပါပြီ။\n" +
+                           "အောက်ပါ အချက် (၃) ချက်ကို Space လေးခြားပြီး ပို့ပေးပါနော် 👇\n\n" +
+                           "📝 *Format:*\n" +
+                           "`ဝင်ငွေ`  `စုငွေ(%)`  `အသုံးစရိတ်`\n\n" +
+                           "💡 *ဥပမာ:*\n" +
+                           "`/calc 100000 20 16000`";
             await sendMessage(env, chatId, vipMsg, "Markdown");
         } else if (user.status === 'rejected') {
             // Rejected ဖြစ်နေသူကို ပြန်လည်ပြင်ဆင်ခွင့်ပေးခြင်း
@@ -266,10 +269,14 @@ async function handleCallback(callbackQuery, env) {
         const targetId = data.split('_')[1];
         await env.DB.prepare("UPDATE users SET status = 'vip', vip_expiry = datetime('now', '+30 days') WHERE chat_id = ?").bind(targetId).run();
         
-        const vipMsg = "🎉 ဂုဏ်ယူပါသည်။ Admin မှ အတည်ပြုပေးလိုက်ပြီဖြစ်၍ Budget Studio ကို စတင်အသုံးပြုနိုင်ပါပြီ။\n" +
-                       "သင့်ရဲ့ ငွေကြေးကိစ္စတွေကို အလွယ်တကူ တွက်ချက်လို့ရပါပြီ။ အောက်က အချက် ၃ ချက်ကို space လေးခြားပြီး ပို့ပေးပါနော်။\n" +
-                       "📝 Format: ဝင်ငွေ စုငွေ(%) အသုံးစရိတ်\n" +
-                       "💡 ဥပမာ - `/calc 100000 20 16000`";
+        // Admin မှ Approve လုပ်ချိန်တွင် ပို့ပေးမည့် ပိုမိုရှင်းလင်းသော Format
+        const vipMsg = "🎉 *ဂုဏ်ယူပါသည်။ Admin မှ အတည်ပြုပေးလိုက်ပြီဖြစ်၍ Budget Studio ကို စတင်အသုံးပြုနိုင်ပါပြီ!*\n\n" +
+                       "သင့်ရဲ့ ငွေကြေးကိစ္စတွေကို အလွယ်တကူ တွက်ချက်လို့ရပါပြီ။\n" +
+                       "အောက်ပါ အချက် (၃) ချက်ကို Space လေးခြားပြီး ပို့ပေးပါနော် 👇\n\n" +
+                       "📝 *Format:*\n" +
+                       "`ဝင်ငွေ`  `စုငွေ(%)`  `အသုံးစရိတ်`\n\n" +
+                       "💡 *ဥပမာ:*\n" +
+                       "`/calc 100000 20 16000`";
                        
         await sendMessage(env, targetId, vipMsg, "Markdown");
         await editMessageText(env, adminChatId, messageId, `✅ Chat ID: ${targetId} ကို Approve လုပ်ပြီးပါပြီ။`);
